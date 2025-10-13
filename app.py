@@ -105,7 +105,7 @@ with col1:
 with col2:
     st.header("Upload Dynamic Authorization Model")
     st.markdown("Generate data lineage document from your Dynamic Authorization model Excel file.")
-    auth_file = st.file_uploader("Upload Authorization Excel (.xlsm)", type=["xlsm"], key="auth")
+    auth_file = st.file_uploader("Upload Authorization Excel (.xlsm)", key="auth")
 
     if auth_file:
         xls = pd.ExcelFile(auth_file, engine="openpyxl")
