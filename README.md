@@ -1,30 +1,33 @@
-# Governance Lineage Generator
+# Governance & Authorization Lineage Generator
 
-This Streamlit app allows users to upload a governance model Excel file and generates a data lineage document based on predefined logic.
+This Streamlit app allows users to upload Excel-based governance and dynamic authorization models and generates lineage documents based on predefined logic.
 
 ## Features
 
-- Upload `.xlsm` governance model files
-- Automatically process and filter relevant sheets
-- Generate lineage records based on business rules, conditions, and contexts
-- Download the final lineage document as an Excel file
+- Upload Governance Model (.xlsm)
+- Upload Dynamic Authorization Model (.xlsm)
+- Generate lineage documents
+- Download results as Excel files
 
-## How to Deploy
+## Setup
 
-1. Create a GitHub repository and upload:
-   - `app.py`
-   - `requirements.txt`
-   - (Optional) `logo.png`
+1. Clone this repository
+2. Ensure `requirements.txt` includes:
+   - streamlit
+   - pandas
+   - openpyxl
 
-2. Go to [Streamlit Cloud](https://streamlit.io/cloud) and log in
+## Deploy on Streamlit Cloud
 
-3. Click **New App**, connect your GitHub repo, and deploy
+1. Go to [Streamlit Cloud](https://streamlit.io/cloud)
+2. Connect your GitHub repository
+3. Select `app.py` as the main file
+4. Click **Deploy**
 
 ## Usage
 
-1. Visit your deployed Streamlit app
-2. Upload your governance model Excel file
-3. Click **Download Lineage Document** to get the output
+- Upload your `.xlsm` file in the appropriate section
+- Click **Download** to get the lineage document
 
 ## Author
 
