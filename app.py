@@ -1,38 +1,22 @@
-
 import streamlit as st
 import pandas as pd
 import io
 from openpyxl import Workbook
-from openpyxl.worksheet.table import Table, TableStyleInfo
+from openpyxl.utils.dataframe import dataframe_to_rows
 
-# Set Streamlit page configuration
 st.set_page_config(page_title="Lineage Generator", layout="wide")
 
-# Page title
-st.title("Lineage Document Generator")
-
-# Create two columns for Governance and Authorization sections
-col1, col2 = st.columns(2)
-
-# Function to write Excel file with filters and editable mode
-def write_excel_with_filters(df):
+# Function to write Excel with basic autofilter and no styling
+def write_clean_excel(df):
     wb = Workbook()
     ws = wb.active
-    ws.title = "Lineage"
 
-    # Write headers
-    ws.append(list(df.columns))
+    # Write DataFrame to worksheet
+    for r in dataframe_to_rows(df, index=False, header=True):
+        ws.append(r)
 
-    # Write data rows
-    for row in df.itertuples(index=False):
-        ws.append(list(row))
-
-    # Apply filter as a table
-    table_range = f"A1:{chr(65 + len(df.columns) - 1)}{len(df) + 1}"
-    table = Table(displayName="LineageTable", ref=table_range)
-    style = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
-    table.tableStyleInfo = style
-    ws.add_table(table)
+    # Apply autofilter to header row
+    ws.auto_filter.ref = ws.dimensions
 
     # Save to BytesIO
     output = io.BytesIO()
@@ -40,178 +24,144 @@ def write_excel_with_filters(df):
     output.seek(0)
     return output
 
-# Governance Model Section
+# Governance Lineage Logic
+def generate_governance_lineage(file):
+    xls = pd.ExcelFile(file, engine="openpyxl")
+    df_rules = pd.read_excel(xls, sheet_name="BUSINESS RULES", engine="openpyxl")
+    df_conditions = pd.read_excel(xls, sheet_name="BUSINESS CONDITIONS", engine="openpyxl")
+    df_mapping = pd.read_excel(xls, sheet_name="GOVERNANCE MAPPING", engine="openpyxl")
+    df_contexts = pd.read_excel(xls, sheet_name="CONTEXTS", engine="openpyxl")
+
+    df_rules = df_rules.rename(columns={"NAME": "RULE NAME", "DISPLAY NAME": "RULE DISPLAY NAME"})
+    df_rules = df_rules[["RULE NAME", "TYPE", "DEFINITION", "RULE DISPLAY NAME", "IS ENABLED?"]]
+    df_rules = df_rules[df_rules["IS ENABLED?"] == "Yes"]
+
+    df_conditions = df_conditions.rename(columns={"NAME": "CONDITION NAME", "DISPLAY NAME": "CONDITION DISPLAY NAME"})
+    df_conditions = df_conditions[["CONDITION NAME", "MAPPED BUSINESS RULE(s)", "IMPACTED ROLES", "IMPACTED ATTRIBUTES",
+                                   "IMPACTED RELATIONSHIPS", "CONDITION DISPLAY NAME", "IS ENABLED?"]]
+    df_conditions = df_conditions[df_conditions["IS ENABLED?"] == "Yes"]
+
+    df_mapping["FOR CONTEXT"] = df_mapping["FOR CONTEXT"].astype(str)
+    df_mapping = df_mapping[["ENTITY", "MAPPED BUSINESS RULE", "MAPPED BUSINESS CONDITION", "FOR CONTEXT", "IS ENABLED?"]]
+    df_mapping = df_mapping[df_mapping["IS ENABLED?"] == "Yes"]
+
+    df_contexts = df_contexts.rename(columns={"NAME": "CONTEXT NAME", "CONTEXT TYPE || CONTEXT NAME": "CONTEXT TYPE AND NAME"})
+    df_contexts = df_contexts[["CONTEXT NAME", "CONTEXT TYPE AND NAME", "WORKFLOW ACTIVITY",
+                               "WORKFLOW ACTIVITY ACTION(s)", "WORKFLOW ACTIVITY CRITERIA"]]
+
+    lineage_records = []
+
+    for _, rule in df_rules.iterrows():
+        rule_name = rule["RULE NAME"]
+        matched_conditions = df_conditions[df_conditions["MAPPED BUSINESS RULE(s)"].str.contains(rule_name, na=False)]
+
+        matched = False
+        if not matched_conditions.empty:
+            for _, cond in matched_conditions.iterrows():
+                cond_name = cond["CONDITION NAME"]
+                context_keys = [f"{cond_name}{'' if i == 0 else i}Context" for i in range(16)]
+                matched_mappings = df_mapping[df_mapping["FOR CONTEXT"].isin(context_keys)]
+                for _, map_row in matched_mappings.iterrows():
+                    context_row = df_contexts[df_contexts["CONTEXT NAME"] == map_row["FOR CONTEXT"]]
+                    context_data = context_row.iloc[0].to_dict() if not context_row.empty else {
+                        "CONTEXT NAME": "", "CONTEXT TYPE AND NAME": "", "WORKFLOW ACTIVITY": "",
+                        "WORKFLOW ACTIVITY ACTION(s)": "", "WORKFLOW ACTIVITY CRITERIA": ""
+                    }
+                    lineage_records.append({
+                        "RULE NAME": rule["RULE NAME"], "TYPE": rule["TYPE"], "DEFINITION": rule["DEFINITION"],
+                        "RULE DISPLAY NAME": rule["RULE DISPLAY NAME"],
+                        "CONDITION NAME": cond["CONDITION NAME"], "IMPACTED ROLES": cond["IMPACTED ROLES"],
+                        "IMPACTED ATTRIBUTES": cond["IMPACTED ATTRIBUTES"], "IMPACTED RELATIONSHIPS": cond["IMPACTED RELATIONSHIPS"],
+                        "CONDITION DISPLAY NAME": cond["CONDITION DISPLAY NAME"],
+                        "ENTITY": map_row["ENTITY"], "MAPPED BUSINESS RULE": map_row["MAPPED BUSINESS RULE"],
+                        "MAPPED BUSINESS CONDITION": map_row["MAPPED BUSINESS CONDITION"], "FOR CONTEXT": map_row["FOR CONTEXT"],
+                        **context_data
+                    })
+                    matched = True
+        if not matched:
+            context_keys = [f"{rule_name}{'' if i == 0 else i}Context" for i in range(16)]
+            matched_mappings = df_mapping[df_mapping["FOR CONTEXT"].isin(context_keys)]
+            if not matched_mappings.empty:
+                for _, map_row in matched_mappings.iterrows():
+                    context_row = df_contexts[df_contexts["CONTEXT NAME"] == map_row["FOR CONTEXT"]]
+                    context_data = context_row.iloc[0].to_dict() if not context_row.empty else {
+                        "CONTEXT NAME": "", "CONTEXT TYPE AND NAME": "", "WORKFLOW ACTIVITY": "",
+                        "WORKFLOW ACTIVITY ACTION(s)": "", "WORKFLOW ACTIVITY CRITERIA": ""
+                    }
+                    lineage_records.append({
+                        "RULE NAME": rule["RULE NAME"], "TYPE": rule["TYPE"], "DEFINITION": rule["DEFINITION"],
+                        "RULE DISPLAY NAME": rule["RULE DISPLAY NAME"],
+                        "CONDITION NAME": "", "IMPACTED ROLES": "", "IMPACTED ATTRIBUTES": "", "IMPACTED RELATIONSHIPS": "",
+                        "CONDITION DISPLAY NAME": "",
+                        "ENTITY": map_row["ENTITY"], "MAPPED BUSINESS RULE": map_row["MAPPED BUSINESS RULE"],
+                        "MAPPED BUSINESS CONDITION": map_row["MAPPED BUSINESS CONDITION"], "FOR CONTEXT": map_row["FOR CONTEXT"],
+                        **context_data
+                    })
+                    matched = True
+        if not matched:
+            fallback_mappings = df_mapping[df_mapping["MAPPED BUSINESS RULE"] == rule_name]
+            for _, map_row in fallback_mappings.iterrows():
+                lineage_records.append({
+                    "RULE NAME": rule["RULE NAME"], "TYPE": rule["TYPE"], "DEFINITION": rule["DEFINITION"],
+                    "RULE DISPLAY NAME": rule["RULE DISPLAY NAME"],
+                    "CONDITION NAME": "", "IMPACTED ROLES": "", "IMPACTED ATTRIBUTES": "", "IMPACTED RELATIONSHIPS": "",
+                    "CONDITION DISPLAY NAME": "",
+                    "ENTITY": map_row["ENTITY"], "MAPPED BUSINESS RULE": map_row["MAPPED BUSINESS RULE"],
+                    "MAPPED BUSINESS CONDITION": map_row["MAPPED BUSINESS CONDITION"], "FOR CONTEXT": "",
+                    "CONTEXT NAME": "", "CONTEXT TYPE AND NAME": "", "WORKFLOW ACTIVITY": "",
+                    "WORKFLOW ACTIVITY ACTION(s)": "", "WORKFLOW ACTIVITY CRITERIA": ""
+                })
+
+    df_output = pd.DataFrame(lineage_records)
+    return write_clean_excel(df_output)
+
+# Dynamic Authorization Lineage Logic
+def generate_auth_lineage(file):
+    xls = pd.ExcelFile(file, engine="openpyxl")
+    df_policy = pd.read_excel(xls, sheet_name="POLICY", engine="openpyxl")
+    df_mapping = pd.read_excel(xls, sheet_name="POLICY MAPPING", engine="openpyxl")
+    df_permissions = pd.read_excel(xls, sheet_name="POLICY PERMISSIONS", engine="openpyxl")
+
+    df_policy = df_policy[df_policy["ENABLED"] == "Yes"]
+    df_policy = df_policy[["POLICY", "ENTITY TYPE", "CONDITION"]]
+
+    df_mapping = df_mapping.rename(columns={"POLICY": "MAPPING POLICY", "PERMISSION SET": "MAPPING PERMISSION SET"})
+    df_mapping = df_mapping[["MAPPING POLICY", "ROLE", "MAPPING PERMISSION SET"]]
+
+    lineage_records = []
+
+    for _, policy in df_policy.iterrows():
+        policy_name = policy["POLICY"]
+        mappings = df_mapping[df_mapping["MAPPING POLICY"].str.contains(policy_name, na=False)]
+        for _, map_row in mappings.iterrows():
+            perm_set = map_row["MAPPING PERMISSION SET"]
+            perms = df_permissions[df_permissions["PERMISSION SET"].str.contains(perm_set, na=False)]
+            for _, perm_row in perms.iterrows():
+                lineage_records.append({
+                    "POLICY": policy["POLICY"], "ENTITY TYPE": policy["ENTITY TYPE"], "CONDITION": policy["CONDITION"],
+                    "ROLE": map_row["ROLE"],
+                    "PERMISSION SET": perm_row["PERMISSION SET"], "ATTRIBUTE": perm_row["ATTRIBUTE"],
+                    "RELATIONSHIP": perm_row["RELATIONSHIP"], "PERMISSION": perm_row["PERMISSION"]
+                })
+
+    df_output = pd.DataFrame(lineage_records)
+    return write_clean_excel(df_output)
+
+# UI Layout
+col1, col2 = st.columns(2)
+
 with col1:
     st.header("Upload Governance Model")
     st.markdown("Generate data lineage document from your Governance model Excel file.")
     gov_file = st.file_uploader("Upload Governance Excel (.xlsm)", key="gov")
-
     if gov_file:
-        xls = pd.ExcelFile(gov_file, engine='openpyxl')
-        sheets_to_keep = ['BUSINESS RULES', 'BUSINESS CONDITIONS', 'GOVERNANCE MAPPING', 'CONTEXTS']
-        sheets = {sheet: xls.parse(sheet) for sheet in sheets_to_keep if sheet in xls.sheet_names}
+        output = generate_governance_lineage(gov_file)
+        st.download_button("Download Governance Lineage", data=output, file_name="Goverance_rules_lineage_output.xlsx")
 
-        # BUSINESS RULES
-        br = sheets['BUSINESS RULES'].rename(columns={'NAME': 'RULE NAME', 'DISPLAY NAME': 'RULE DISPLAY NAME'})
-        br = br[['RULE NAME', 'TYPE', 'DEFINITION', 'RULE DISPLAY NAME', 'IS ENABLED?']]
-        br = br[br['IS ENABLED?'] == 'Yes']
-
-        # BUSINESS CONDITIONS
-        bc = sheets['BUSINESS CONDITIONS'].rename(columns={'NAME': 'CONDITION NAME', 'DISPLAY NAME': 'CONDITION DISPLAY NAME'})
-        bc = bc[['CONDITION NAME', 'MAPPED BUSINESS RULE(s)', 'IMPACTED ROLES', 'IMPACTED ATTRIBUTES', 'IMPACTED RELATIONSHIPS', 'CONDITION DISPLAY NAME', 'IS ENABLED?']]
-        bc = bc[bc['IS ENABLED?'] == 'Yes']
-
-        # GOVERNANCE MAPPING
-        gm = sheets['GOVERNANCE MAPPING']
-        gm['FOR CONTEXT'] = gm['FOR CONTEXT'].astype(str)
-        gm = gm[['ENTITY', 'MAPPED BUSINESS RULE', 'MAPPED BUSINESS CONDITION', 'FOR CONTEXT', 'IS ENABLED?']]
-        gm = gm[gm['IS ENABLED?'] == 'Yes']
-
-        # CONTEXTS
-        ctx = sheets['CONTEXTS'].rename(columns={'NAME': 'CONTEXT NAME', 'CONTEXT TYPE || CONTEXT NAME': 'CONTEXT TYPE AND NAME'})
-        ctx = ctx[['CONTEXT NAME', 'CONTEXT TYPE AND NAME', 'WORKFLOW ACTIVITY', 'WORKFLOW ACTIVITY ACTION(s)', 'WORKFLOW ACTIVITY CRITERIA']]
-
-        lineage_records = []
-
-        for _, rule in br.iterrows():
-            rule_name = rule['RULE NAME']
-            matched_conditions = bc[bc['MAPPED BUSINESS RULE(s)'].str.contains(rule_name, na=False)]
-
-            if not matched_conditions.empty:
-                for _, cond in matched_conditions.iterrows():
-                    cond_name = cond['CONDITION NAME']
-                    context_keys = [f"{cond_name}{i if i > 0 else ''}Context" for i in range(16)]
-                    matched_gm = gm[gm['FOR CONTEXT'].isin(context_keys)]
-
-                    if not matched_gm.empty:
-                        for _, gm_row in matched_gm.iterrows():
-                            matched_ctx = ctx[ctx['CONTEXT NAME'] == gm_row['FOR CONTEXT']]
-                            if not matched_ctx.empty:
-                                for _, ctx_row in matched_ctx.iterrows():
-                                    lineage_records.append({
-                                        'RULE NAME': rule['RULE NAME'],
-                                        'TYPE': rule['TYPE'],
-                                        'DEFINITION': rule['DEFINITION'],
-                                        'RULE DISPLAY NAME': rule['RULE DISPLAY NAME'],
-                                        'CONDITION NAME': cond['CONDITION NAME'],
-                                        'IMPACTED ROLES': cond['IMPACTED ROLES'],
-                                        'IMPACTED ATTRIBUTES': cond['IMPACTED ATTRIBUTES'],
-                                        'IMPACTED RELATIONSHIPS': cond['IMPACTED RELATIONSHIPS'],
-                                        'CONDITION DISPLAY NAME': cond['CONDITION DISPLAY NAME'],
-                                        'ENTITY': gm_row['ENTITY'],
-                                        'MAPPED BUSINESS RULE': gm_row['MAPPED BUSINESS RULE'],
-                                        'MAPPED BUSINESS CONDITION': gm_row['MAPPED BUSINESS CONDITION'],
-                                        'FOR CONTEXT': gm_row['FOR CONTEXT'],
-                                        'CONTEXT NAME': ctx_row['CONTEXT NAME'],
-                                        'CONTEXT TYPE AND NAME': ctx_row['CONTEXT TYPE AND NAME'],
-                                        'WORKFLOW ACTIVITY': ctx_row['WORKFLOW ACTIVITY'],
-                                        'WORKFLOW ACTIVITY ACTION(s)': ctx_row['WORKFLOW ACTIVITY ACTION(s)'],
-                                        'WORKFLOW ACTIVITY CRITERIA': ctx_row['WORKFLOW ACTIVITY CRITERIA']
-                                    })
-            else:
-                context_keys = [f"{rule_name}{i if i > 0 else ''}Context" for i in range(16)]
-                matched_gm = gm[gm['FOR CONTEXT'].isin(context_keys)]
-
-                if not matched_gm.empty:
-                    for _, gm_row in matched_gm.iterrows():
-                        matched_ctx = ctx[ctx['CONTEXT NAME'] == gm_row['FOR CONTEXT']]
-                        if not matched_ctx.empty:
-                            for _, ctx_row in matched_ctx.iterrows():
-                                lineage_records.append({
-                                    'RULE NAME': rule['RULE NAME'],
-                                    'TYPE': rule['TYPE'],
-                                    'DEFINITION': rule['DEFINITION'],
-                                    'RULE DISPLAY NAME': rule['RULE DISPLAY NAME'],
-                                    'CONDITION NAME': "",
-                                    'IMPACTED ROLES': "",
-                                    'IMPACTED ATTRIBUTES': "",
-                                    'IMPACTED RELATIONSHIPS': "",
-                                    'CONDITION DISPLAY NAME': "",
-                                    'ENTITY': gm_row['ENTITY'],
-                                    'MAPPED BUSINESS RULE': gm_row['MAPPED BUSINESS RULE'],
-                                    'MAPPED BUSINESS CONDITION': gm_row['MAPPED BUSINESS CONDITION'],
-                                    'FOR CONTEXT': gm_row['FOR CONTEXT'],
-                                    'CONTEXT NAME': ctx_row['CONTEXT NAME'],
-                                    'CONTEXT TYPE AND NAME': ctx_row['CONTEXT TYPE AND NAME'],
-                                    'WORKFLOW ACTIVITY': ctx_row['WORKFLOW ACTIVITY'],
-                                    'WORKFLOW ACTIVITY ACTION(s)': ctx_row['WORKFLOW ACTIVITY ACTION(s)'],
-                                    'WORKFLOW ACTIVITY CRITERIA': ctx_row['WORKFLOW ACTIVITY CRITERIA']
-                                })
-                else:
-                    fallback_gm = gm[gm['MAPPED BUSINESS RULE'].str.contains(rule_name, na=False)]
-                    for _, gm_row in fallback_gm.iterrows():
-                        lineage_records.append({
-                            'RULE NAME': rule['RULE NAME'],
-                            'TYPE': rule['TYPE'],
-                            'DEFINITION': rule['DEFINITION'],
-                            'RULE DISPLAY NAME': rule['RULE DISPLAY NAME'],
-                            'CONDITION NAME': "",
-                            'IMPACTED ROLES': "",
-                            'IMPACTED ATTRIBUTES': "",
-                            'IMPACTED RELATIONSHIPS': "",
-                            'CONDITION DISPLAY NAME': "",
-                            'ENTITY': gm_row['ENTITY'],
-                            'MAPPED BUSINESS RULE': gm_row['MAPPED BUSINESS RULE'],
-                            'MAPPED BUSINESS CONDITION': gm_row['MAPPED BUSINESS CONDITION'],
-                            'FOR CONTEXT': "",
-                            'CONTEXT NAME': "",
-                            'CONTEXT TYPE AND NAME': "",
-                            'WORKFLOW ACTIVITY': "",
-                            'WORKFLOW ACTIVITY ACTION(s)': "",
-                            'WORKFLOW ACTIVITY CRITERIA': ""
-                        })
-
-        if lineage_records:
-            df_output = pd.DataFrame(lineage_records)
-            excel_data = write_excel_with_filters(df_output)
-            st.download_button("Download Governance Lineage Document", data=excel_data, file_name="Goverance_rules_lineage_output.xlsx")
-
-# Dynamic Authorization Section
 with col2:
     st.header("Upload Dynamic Authorization Model")
     st.markdown("Generate data lineage document from your Dynamic Authorization model Excel file.")
     auth_file = st.file_uploader("Upload Authorization Excel (.xlsm)", key="auth")
-
     if auth_file:
-        xls = pd.ExcelFile(auth_file, engine='openpyxl')
-        sheets_to_keep = ['POLICY', 'POLICY MAPPING', 'POLICY PERMISSIONS']
-        sheets = {sheet: xls.parse(sheet) for sheet in sheets_to_keep if sheet in xls.sheet_names}
-
-        # POLICY
-        policy = sheets['POLICY']
-        policy = policy[['POLICY', 'ENTITY TYPE', 'CONDITION', 'ENABLED']]
-        policy = policy[policy['ENABLED'] == 'Yes']
-
-        # POLICY MAPPING
-        mapping = sheets['POLICY MAPPING'].rename(columns={'POLICY': 'MAPPING POLICY', 'PERMISSION SET': 'MAPPING PERMISSION SET'})
-        mapping = mapping[['MAPPING POLICY', 'ROLE', 'MAPPING PERMISSION SET']]
-
-        # POLICY PERMISSIONS
-        permissions = sheets['POLICY PERMISSIONS']
-
-        lineage_records = []
-
-        for _, pol in policy.iterrows():
-            pol_name = pol['POLICY']
-            matched_map = mapping[mapping['MAPPING POLICY'].str.contains(pol_name, na=False)]
-
-            for _, map_row in matched_map.iterrows():
-                perm_set = map_row['MAPPING PERMISSION SET']
-                matched_perm = permissions[permissions['PERMISSION SET'].str.contains(perm_set, na=False)]
-
-                for _, perm_row in matched_perm.iterrows():
-                    lineage_records.append({
-                        'POLICY': pol['POLICY'],
-                        'ENTITY TYPE': pol['ENTITY TYPE'],
-                        'CONDITION': pol['CONDITION'],
-                        'ROLE': map_row['ROLE'],
-                        'PERMISSION SET': perm_row['PERMISSION SET'],
-                        'ATTRIBUTE': perm_row['ATTRIBUTE'],
-                        'RELATIONSHIP': perm_row['RELATIONSHIP'],
-                        'PERMISSION': perm_row['PERMISSION']
-                    })
-
-        if lineage_records:
-            df_output = pd.DataFrame(lineage_records)
-            excel_data = write_excel_with_filters(df_output)
-            st.download_button("Download Authorization Lineage Document", data=excel_data, file_name="dynamic_auth_lineage_output.xlsx")
+        output = generate_auth_lineage(auth_file)
+        st.download_button("Download Authorization Lineage", data=output, file_name="dynamic_auth_lineage_output.xlsx")
