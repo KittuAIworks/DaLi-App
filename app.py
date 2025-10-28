@@ -151,7 +151,7 @@ def generate_keyword_analysis(file):
     ]
 
    
-xls = pd.ExcelFile(file, engine="openpyxl")
+    xls = pd.ExcelFile(file, engine="openpyxl")
     df_rules = pd.read_excel(xls, sheet_name="BUSINESS RULES", engine="openpyxl")
 
     # ✅ Rename columns to match governance logic
