@@ -150,8 +150,12 @@ def generate_keyword_analysis(file):
         "URLEncode", "GetApplicationURL", "CurrentWorkflowStepStartDate", "ContextType", "ContextPath"
     ]
 
-    xls = pd.ExcelFile(file, engine="openpyxl")
+   
+xls = pd.ExcelFile(file, engine="openpyxl")
     df_rules = pd.read_excel(xls, sheet_name="BUSINESS RULES", engine="openpyxl")
+
+    # ✅ Rename columns to match governance logic
+    df_rules = df_rules.rename(columns={"NAME": "RULE NAME"})
     df_rules = df_rules[df_rules["IS ENABLED?"] == "Yes"]
     df_rules["DEFINITION"] = df_rules["DEFINITION"].astype(str).str.strip()
 
@@ -163,6 +167,7 @@ def generate_keyword_analysis(file):
 
     df_output = pd.DataFrame(results).sort_values(by="Count of Matching Rules", ascending=False)
     return write_clean_excel(df_output)
+
 
 # UI Layout
 col1, col2 = st.columns(2)
