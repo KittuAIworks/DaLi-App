@@ -151,22 +151,27 @@ def generate_keyword_analysis(file):
     ]
 
    
+
     xls = pd.ExcelFile(file, engine="openpyxl")
     df_rules = pd.read_excel(xls, sheet_name="BUSINESS RULES", engine="openpyxl")
 
-    # ✅ Rename columns to match governance logic
+    # ✅ Rename columns
     df_rules = df_rules.rename(columns={"NAME": "RULE NAME"})
     df_rules = df_rules[df_rules["IS ENABLED?"] == "Yes"]
-    df_rules["DEFINITION"] = df_rules["DEFINITION"].astype(str).str.strip()
+
+    # Normalize DEFINITION column
+    df_rules["DEFINITION"] = df_rules["DEFINITION"].astype(str).str.lower().str.strip()
 
     results = []
     for keyword in keywords:
-        count = df_rules[df_rules["DEFINITION"].str.contains(keyword, case=False, na=False)]["RULE NAME"].nunique()
+        keyword_lower = keyword.lower()
+        count = df_rules[df_rules["DEFINITION"].str.contains(keyword_lower, na=False)]["RULE NAME"].nunique()
         if count > 0:
             results.append({"Keyword": keyword, "Count of Matching Rules": count})
 
     df_output = pd.DataFrame(results).sort_values(by="Count of Matching Rules", ascending=False)
     return write_clean_excel(df_output)
+
 
 
 # UI Layout
