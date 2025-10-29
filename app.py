@@ -182,7 +182,7 @@ def generate_unused_business_rules(file):
     df_mapping = pd.read_excel(xls, sheet_name="GOVERNANCE MAPPING", engine="openpyxl")
 
     # Filter enabled rules
-    # df_rules = df_rules[df_rules["IS ENABLED?"] == "Yes"]
+    df_rules = df_rules[df_rules["IS ENABLED?"] == "Yes"]
     rule_names = set(df_rules["NAME"].dropna().astype(str))
 
     # Extract mapped rules from BUSINESS CONDITIONS
