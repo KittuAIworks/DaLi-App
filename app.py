@@ -170,10 +170,44 @@ def generate_keyword_analysis(file):
     return write_clean_excel(df_output)
 
 
+# UI Layout
+col1, col2 = st.columns(2)
 
+
+# Unused Business Rules Logic
+def generate_unused_business_rules(file):
+    xls = pd.ExcelFile(file, engine="openpyxl")
+    df_rules = pd.read_excel(xls, sheet_name="BUSINESS RULES", engine="openpyxl")
+    df_conditions = pd.read_excel(xls, sheet_name="BUSINESS CONDITIONS", engine="openpyxl")
+    df_mapping = pd.read_excel(xls, sheet_name="GOVERNANCE MAPPING", engine="openpyxl")
+
+    # Filter enabled rules
+    df_rules = df_rules[df_rules["IS ENABLED?"] == "Yes"]
+    rule_names = set(df_rules["NAME"].dropna().astype(str))
+
+    # Extract mapped rules from BUSINESS CONDITIONS
+    condition_rules = df_conditions[df_conditions["IS ENABLED?"] == "Yes"]["MAPPED BUSINESS RULE(s)"].dropna().astype(str)
+    mapped_condition_rules = set()
+    for entry in condition_rules:
+        mapped_condition_rules.update([rule.strip() for rule in entry.split("||")])
+
+    # Extract mapped rules from GOVERNANCE MAPPING
+    mapping_rules = df_mapping[df_mapping["IS ENABLED?"] == "Yes"]["MAPPED BUSINESS RULE"].dropna().astype(str)
+    mapped_mapping_rules = set()
+    for entry in mapping_rules:
+        mapped_mapping_rules.update([rule.strip() for rule in entry.split("||")])
+
+    # Combine all mapped rules
+    all_mapped_rules = mapped_condition_rules.union(mapped_mapping_rules)
+
+    # Identify unused rules
+    unused_rules = sorted(list(rule_names - all_mapped_rules))
+    df_unused = pd.DataFrame({"Unused Business Rules": unused_rules})
+    return write_clean_excel(df_unused)
 
 # UI Layout
 col1, col2 = st.columns(2)
+
 
 with col1:
     st.header("Upload Governance Model")
@@ -185,6 +219,12 @@ with col1:
 
         keyword_output = generate_keyword_analysis(gov_file)
         st.download_button("Generate Keyword List Document", data=keyword_output, file_name="keywords used in governance model.xlsx")
+
+
+        # New button for unused business rules
+        unused_output = generate_unused_business_rules(gov_file)
+        st.download_button("Unused Business Rules in Governance Model", data=unused_output, file_name="unused_business_rules.xlsx")
+
 
 with col2:
     st.header("Upload Dynamic Authorization Model")
