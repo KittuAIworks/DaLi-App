@@ -18,6 +18,12 @@ def write_clean_excel(df):
     output.seek(0)
     return output
 
+# Utility function to write plain text output (used for Data Model Audit)
+def write_text_file(text):
+    output = io.BytesIO()
+    output.write(text.encode("utf-8"))
+    output.seek(0)
+    return output
 
 # Governance Lineage Logic
 def generate_governance_lineage(file):
@@ -226,6 +232,72 @@ def generate_unused_business_rules(file):
     df_unused = pd.DataFrame({"Unused Business Rules": unused_rules})
     return write_clean_excel(df_unused)
 
+# -------------------------------
+# Data Model Lineage Logic
+# -------------------------------
+def generate_data_model_lineage(file):
+    xls = pd.ExcelFile(file, engine="openpyxl")
+    df_attr = pd.read_excel(xls, sheet_name="ATTRIBUTES", engine="openpyxl")
+    df_ear = pd.read_excel(xls, sheet_name="E-A-R MODEL", engine="openpyxl")
+
+    df_attr = df_attr[["NAME", "DISPLAY NAME", "DATA TYPE", "USES REFERENCE DATA", "PATH ROOT NODE"]]
+    df_ear = df_ear[["MAPPED ATTRIBUTE", "ENTITY"]]
+    df_ear = df_ear[df_ear["ENTITY"].notna() & (df_ear["ENTITY"].astype(str).str.strip() != "")]
+
+    df_merged = df_attr.merge(df_ear, left_on="NAME", right_on="MAPPED ATTRIBUTE", how="inner")
+    df_merged = df_merged[["NAME", "ENTITY", "DISPLAY NAME", "DATA TYPE", "USES REFERENCE DATA", "PATH ROOT NODE"]]
+    df_merged = df_merged.sort_values(by="NAME")
+
+    # Return Excel file as BytesIO
+    return write_clean_excel(df_merged)
+
+
+# -------------------------------
+# Data Model Audit Report Logic
+# -------------------------------
+def generate_data_model_audit(file):
+    xls = pd.ExcelFile(file, engine="openpyxl")
+    df_entities = pd.read_excel(xls, sheet_name="ENTITIES", engine="openpyxl")
+    df_relationships = pd.read_excel(xls, sheet_name="RELATIONSHIPS", engine="openpyxl")
+    df_attributes = pd.read_excel(xls, sheet_name="ATTRIBUTES", engine="openpyxl")
+    df_ear = pd.read_excel(xls, sheet_name="E-A-R MODEL", engine="openpyxl")
+
+    # Unused Entities
+    entity_names = set(df_entities["NAME"].dropna().astype(str))
+    used_entities = set(df_ear["ENTITY"].dropna().astype(str))
+    unused_entities = sorted(list(entity_names - used_entities))
+
+    # Unused Relationships
+    rel_names = set(df_relationships["NAME"].dropna().astype(str))
+    used_rels = set(df_ear["MAPPED RELATIONSHIP"].dropna().astype(str))
+    unused_relationships = sorted(list(rel_names - used_rels))
+
+    # Unmapped Attributes
+    df_nested_parents = df_attributes[df_attributes["DISPLAY TYPE"] == "nestedgrid"]
+    nested_parent_names = set(df_nested_parents["NAME"].dropna().astype(str))
+    df_unmapped = df_attributes[~df_attributes["GROUP"].isin(nested_parent_names)]
+    attr_names = set(df_unmapped["NAME"].dropna().astype(str))
+    mapped_attrs = set(df_ear["MAPPED ATTRIBUTE"].dropna().astype(str))
+    unmapped_attributes = sorted(list(attr_names - mapped_attrs))
+
+    # Nestedgrid Attributes Without Identifier
+    missing_identifiers = []
+    for parent in nested_parent_names:
+        children = df_attributes[df_attributes["GROUP"] == parent]
+        identifiers = children["IS NESTED GROUP IDENTIFIER?"].dropna().astype(str).str.lower()
+        if not any(identifiers == "yes"):
+            missing_identifiers.append(parent)
+    missing_identifiers = sorted(missing_identifiers)
+
+    # Format output
+    report = "Unused Entities:\n" + "\n".join(f"- {e}" for e in unused_entities) + "\n\n"
+    report += "Unused Relationships:\n" + "\n".join(f"- {r}" for r in unused_relationships) + "\n\n"
+    report += "Unmapped Attributes:\n" + "\n".join(f"- {a}" for a in unmapped_attributes) + "\n\n"
+    report += "Nestedgrid Attributes Without Identifier:\n" + "\n".join(f"- {n}" for n in missing_identifiers)
+
+    # Return text file as StringIO
+    return write_text_file(report)
+
 
 # UI Layout
 col1, col2 = st.columns(2)
@@ -252,3 +324,39 @@ with col2:
     if auth_file:
         output = generate_auth_lineage(auth_file)
         st.download_button("Download Authorization Lineage", data=output, file_name="dynamic_auth_lineage_output.xlsx")
+
+# -------------------------------
+# New Section: Data Model
+# -------------------------------
+
+col3, _ = st.columns([1, 1])  # keeps same centered width as other uploaders
+with col3:
+    st.header("Upload Data Model")
+    st.markdown("Generate data lineage document and Audit report from your Data model Excel file.")
+     # 🔹 Brief description of Audit Report contents
+    st.markdown("""
+    <div style='background-color:#f8f9fa; border-left:4px solid #4a90e2; padding:10px; border-radius:8px;'>
+        <b>Audit Report includes:</b><br>
+        • Unused Entities<br>
+        • Unused Relationships<br>
+        • Unmapped Attributes<br>
+        • Nestedgrid Attributes Without Identifier
+    </div>
+    """, unsafe_allow_html=True)
+    data_file = st.file_uploader("Upload Data Model Excel (.xlsx)", key="data_model")
+
+    if data_file:
+        lineage_output = generate_data_model_lineage(data_file)
+        audit_output = generate_data_model_audit(data_file)
+
+        st.download_button(
+            "Download Data Model Lineage Document",
+            data=lineage_output,
+            file_name="Datamodel_lineage_document.xlsx"
+        )
+
+        st.download_button(
+            "Download Data Model Audit Report",
+            data=audit_output,
+            file_name="Datamodel_audit_report.txt"
+        )
