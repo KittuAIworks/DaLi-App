@@ -18,38 +18,65 @@ def write_clean_excel(df):
     output.seek(0)
     return output
 
+
 # Governance Lineage Logic
 def generate_governance_lineage(file):
     xls = pd.ExcelFile(file, engine="openpyxl")
     df_rules = pd.read_excel(xls, sheet_name="BUSINESS RULES", engine="openpyxl")
     df_conditions = pd.read_excel(xls, sheet_name="BUSINESS CONDITIONS", engine="openpyxl")
     df_mapping = pd.read_excel(xls, sheet_name="GOVERNANCE MAPPING", engine="openpyxl")
-    df_contexts = pd.read_excel(xls, sheet_name="CONTEXTS", engine="openpyxl")
+
+    # --- FIX: Handle duplicate "CONTEXT TYPE || CONTEXT NAME" columns ---
+    df_contexts_raw = pd.read_excel(xls, sheet_name="CONTEXTS", header=0, engine="openpyxl")
+
+    # Ensure duplicate column names get unique suffixes (.1, .2, etc.)
+    cols = list(df_contexts_raw.columns)
+    new_cols = []
+    seen = {}
+    for col in cols:
+        if col in seen:
+            seen[col] += 1
+            new_cols.append(f"{col}.{seen[col]}")
+        else:
+            seen[col] = 0
+            new_cols.append(col)
+    df_contexts_raw.columns = new_cols
+
+    # Select the SECOND occurrence (Column D)
+    context_type_name_col = [col for col in df_contexts_raw.columns if col.startswith("CONTEXT TYPE || CONTEXT NAME")][1]
+
+    df_contexts = df_contexts_raw.rename(columns={
+        "NAME": "CONTEXT NAME",
+        context_type_name_col: "CONTEXT TYPE AND NAME"
+    })
+    df_contexts = df_contexts[[
+        "CONTEXT NAME", "CONTEXT TYPE AND NAME",
+        "WORKFLOW ACTIVITY", "WORKFLOW ACTIVITY ACTION(s)", "WORKFLOW ACTIVITY CRITERIA"
+    ]]
+    # --- END FIX ---
 
     df_rules = df_rules.rename(columns={"NAME": "RULE NAME", "DISPLAY NAME": "RULE DISPLAY NAME"})
     df_rules = df_rules[["RULE NAME", "TYPE", "DEFINITION", "RULE DISPLAY NAME", "IS ENABLED?"]]
     df_rules = df_rules[df_rules["IS ENABLED?"] == "Yes"]
 
     df_conditions = df_conditions.rename(columns={"NAME": "CONDITION NAME", "DISPLAY NAME": "CONDITION DISPLAY NAME"})
-    df_conditions = df_conditions[["CONDITION NAME", "MAPPED BUSINESS RULE(s)", "IMPACTED ROLES", "IMPACTED ATTRIBUTES",
-                                   "IMPACTED RELATIONSHIPS", "CONDITION DISPLAY NAME", "IS ENABLED?"]]
+    df_conditions = df_conditions[[
+        "CONDITION NAME", "MAPPED BUSINESS RULE(s)", "IMPACTED ROLES", "IMPACTED ATTRIBUTES",
+        "IMPACTED RELATIONSHIPS", "CONDITION DISPLAY NAME", "IS ENABLED?"
+    ]]
     df_conditions = df_conditions[df_conditions["IS ENABLED?"] == "Yes"]
 
     df_mapping["FOR CONTEXT"] = df_mapping["FOR CONTEXT"].astype(str)
     df_mapping = df_mapping[["ENTITY", "MAPPED BUSINESS RULE", "MAPPED BUSINESS CONDITION", "FOR CONTEXT", "IS ENABLED?"]]
     df_mapping = df_mapping[df_mapping["IS ENABLED?"] == "Yes"]
 
-    df_contexts = df_contexts.rename(columns={"NAME": "CONTEXT NAME", "CONTEXT TYPE || CONTEXT NAME": "CONTEXT TYPE AND NAME"})
-    df_contexts = df_contexts[["CONTEXT NAME", "CONTEXT TYPE AND NAME", "WORKFLOW ACTIVITY",
-                               "WORKFLOW ACTIVITY ACTION(s)", "WORKFLOW ACTIVITY CRITERIA"]]
-
     lineage_records = []
 
     for _, rule in df_rules.iterrows():
         rule_name = rule["RULE NAME"]
         matched_conditions = df_conditions[df_conditions["MAPPED BUSINESS RULE(s)"].str.contains(rule_name, na=False)]
-
         matched = False
+
         if not matched_conditions.empty:
             for _, cond in matched_conditions.iterrows():
                 cond_name = cond["CONDITION NAME"]
@@ -72,6 +99,7 @@ def generate_governance_lineage(file):
                         **context_data
                     })
                     matched = True
+
         if not matched:
             context_keys = [f"{rule_name}{'' if i == 0 else i}Context" for i in range(16)]
             matched_mappings = df_mapping[df_mapping["FOR CONTEXT"].isin(context_keys)]
@@ -92,6 +120,7 @@ def generate_governance_lineage(file):
                         **context_data
                     })
                     matched = True
+
         if not matched:
             fallback_mappings = df_mapping[df_mapping["MAPPED BUSINESS RULE"] == rule_name]
             for _, map_row in fallback_mappings.iterrows():
@@ -108,6 +137,7 @@ def generate_governance_lineage(file):
 
     df_output = pd.DataFrame(lineage_records)
     return write_clean_excel(df_output)
+
 
 # Dynamic Authorization Logic
 def generate_auth_lineage(file):
@@ -141,37 +171,34 @@ def generate_auth_lineage(file):
     df_output = pd.DataFrame(lineage_records)
     return write_clean_excel(df_output)
 
-# Keyword Analysis Logic with 227 keywords inline
+
+# Keyword Analysis Logic (simplified)
 def generate_keyword_analysis(file):
-    # Full keyword list from your Excel file
-    keywords = [
- "GetEntityBusinessConditionScore", "ContextsHave", "IsContextChanged", "GetContextPath", "GetEntityId", "GetEntityIds", "GetEntityType", "GetEntityVersion", "GetEntityName", "GetEntityProperty", "GetCurrentWorkflowAssignedUser", "GetLocalesOfChangedData", "GetCurrentWorkflowStep", "GetAllContexts", "GetChildContexts", "HasContextLinks", "HaveErrorsInContext", "IsEntityDeleted", "IsEntityInWorkflow", "IsEntityInWorkflowInContext", "SetEntityProperty", "GetConfigKeyValue", "GenerateUniqueId", "GetWeekOfYear", "AttributesHaveErrorsInContext", "GetAttributeValue", "GetAttributeValueFromContext", "GetAttributeValuesFromContext", "GetAttributeValueWithDefault", "GetAttributeValues", "GetAttributeValuesWithDefault", "GetAttributeValuesWithDefaultFromContext", "GetAttributeValueWithDefaultFromContext", "GetAttributeValueReferenceId", "GetAttributeValueReferenceIds", "GetAttributeValueProperty", "GetEntityAttributeValuesById", "GetEntityAttributeValueById", "GetEntityAttributeValueByIdInContext", "GetNestedAttributeComputedValue", "GetNestedAttributeValues", "GetNestedAttributeRow", "GetNestedAttributeRows", "DeleteNestedAttributeRows", "GetEntityNestedAttributeRow", "GetEntityNestedAttributeRows", "GetNestedAttributeValueReferenceID", "GetChildAttributefromNestedRowString", "GetRelatedEntityIdByAttributeValue", "GetRelatedEntityIdByAttributeValueFromContext", "GetRelatedEntityIdsByAttributeValue", "GetRelatedEntityIdsByAttributeValueFromContext", "HaveAnyAttributesChanged", "HaveAnyAttributesChangedInContext", "HaveAnyRelationshipAttributesChanged", "HaveAttributesChanged", "HaveAttributesChangedInContext", "IsAttributeLocalizable", "ValidateEmptyAttributes", "ValidateEmptyAttributesInContext", "DeleteAttribute", "DeleteEntityAttribute", "DeleteAttributeInContext", "DeleteRelationshipAttributeInContext", "GetExternalSourceOfAttribute", "GetEntitiesAttributesValues", "HaveOnlySpecifiedAttributesChanged", "GetMappedAttributeNames", "GetDeeplyNestedAttributeJSON", "GetEntityDeeplyNestedAttributeJSON", "GetAttributePreviousValues", "AreRelationshipsDeleted", "CheckIfAllRelationshipAttributeValueIs", "CheckIfAnyRelationshipAttributeValueIs", "CheckIfAllRelatedEntityAttributeValueIs", "CheckIfAnyRelatedEntityAttributeValueIs", "GetCurrentRelatedEntityIds", "GetRelatedEntityIdForContext", "GetRelatedEntityId", "GetRelatedEntityIds", "GetRelatedEntityIdsForContext", "GetRelatedEntityIdByRelationshipAttributeValue", "GetRelatedEntityIdsByRelationshipAttributeValue", "GetRelatedEntityIdByRelationshipAttributeValueFromContext", "GetRelatedEntityIdsByRelationshipAttributeValueFromContext", "GetRelationshipAttributevalue", "GetRelationshipAttributevalues", "HaveRelationships", "HaveRelationshipsInContext", "HaveRelationshipsChanged", "RelationshipsHaveErrorsInContext", "RelationshipsCountInContext", "ValidateEmptyRelationshipAttributes", "ValidateEmptyRelationshipAttributesInContext", "ValidateEmptyAttributesForRelatedEntities", "ValidateEmptyAttributesForRelatedEntitiesInContext", "WhereUsedRelationship", "IsInheritanceBlocked", "GetWhereUsedEntityIds", "IsCurrentUserInRole", "CurrentUser", "GetImpersonateUser", "GetUserOwnershipData", "GetUserOwnershipEditData", "GetUserOwnershipDataCollection", "GetUserOwnershipEditDataCollection", "GetUserProperty", "StopBRExecution", "ValidateExternalLink", "GetClientAttributesFromRequest", "GetDefaultLocaleForTenant", "GetGlobalVariable", "GetRestAPIResponse", "GetUniqueId", "JoinStringCollection", "SetVariable", "SetGlobalVariable", "ValidateByRegex", "GetOriginatingClientId", "GetClientId", "ValidateGTINCheckDigit", "ValidateISBNCheckDigit", "CalculateGTINCheckDigit", "GetValueByJsonPath", "ExtractUOMInfo", "ValidateLuhnAlgorithm", "HasSrcAloneChanged", "URLEncode", "AddToContext", "DeleteContext", "AddNestedAttributeRow", "AddNestedAttributeRowInContext", "SetAttributeValue", "SetAttributeValueInContext", "SetAttributeValues", "SetAttributeValuesInContext", "SetNestedChildAttributeByCondition", "SetDeeplyNestedAttributeJSON", "DeleteRelationships", "SetRelationshipAttribute", "SetRelationshipAttributeFromRelatedEntity", "AddRelationshipInContextByEntityId", "CopyAttributeValueToGovern", "GetBusinessConditionStatus", "GetEntityBusinessConditionStatus", "AddAttributeError", "AddAttributeInformation", "AddContextError", "AddContextInformation", "AddContextWarning", "AddAttributeErrorInContext", "AddAttributeInformationInContext", "AddAttributeWarningInContext", "AddRelationshipAttributeError", "AddRelationshipAttributeInformation", "AddRelationshipAttributeWarning", "AddRelationshipAttributeErrorInContext", "AddRelationshipAttributeInformationInContext", "AddRelationshipAttributeWarning", "AddRelationshipError", "AddRelationshipInformation", "AddRelationshipWarning", "AddRelationshipInformationInContext", "AddRelationshipErrorInContext", "AddRelationshipWarningInContext", "AddAttributeWarning", "ValidatePhone", "ChangeAssignment", "ChangeAssignmentInContext", "InitiateExport", "InitiateExportInContext", "InitiateExportInLocale", "InitiateExportInContextAndLocale", "InitiateExportForDeletedEntity", "InitiateExportForDeletedEntityInContext", "InitiateExportForEntity", "InitiateExportForRelatedEntity", "InitiateExportForDeletedEntityInContextAndLocale", "InvokeWorkflow", "InvokeWorkflowInContext", "ResumeWorkflow", "ResumeWorkflowInContext", "ScheduleEntityForExport", "ScheduleEntityForGraphProcessing", "ScheduleWhereUsedEntitiesForGraphProcessing", "SendEntityForGraphProcessing", "SendWhereUsedEntitiesForGraphProcessing", "SendEmail", "CreateSnapshot", "RestoreSnapshot", "ExportApprovedVersion", "CreateAndExportApprovedVersion", "CreateEntity", "DeleteEntity", "GetBusinessConditionStatus", "GetEntityBusinessConditionStatus", "ManageAddress", "GetWorkflowComment", "GetEntityCurrentWorkflowStep", "EndWorkflow", "GenerateVariants", "ScheduleOrSendEntityForGraphProcessing", "SetEntityAttributeValue", "SetEntityAttributeValueForContext", "AddEntityNestedAttributeRow", "SetEntityDeeplyNestedAttributeJSON", "CheckIfAnyWhereUsedEntityAttributeValueIs", "GetChangedNestedAttributeRows", "GetDeletedNestedAttributeRows", "ResumeRelatedEntityWorkflow", "ScheduleRelatedEntitiesForGraphProcessing", "SendRelatedEntitiesForGraphProcessing", "SetRelatedEntityAttributeValue", "SetRelatedEntityAttributeValueForContext", "WhereUsedRelationshipsCountInContext", "GetConnectorState", "SetConnectorState", "InvokeConnectorState", "AttributeInContext", "SortedAttributeValues", "SortedAttributeValuesFromContext", "URLEncode", "GetApplicationURL", "CurrentWorkflowStepStartDate", "ContextType", "ContextPath"
+    keywords = ["GetEntityBusinessConditionScore", "ContextsHave", "IsContextChanged", "GetContextPath", "GetEntityId", "GetEntityIds", "GetEntityType", "GetEntityVersion", "GetEntityName", "GetEntityProperty", "GetCurrentWorkflowAssignedUser", "GetLocalesOfChangedData", "GetCurrentWorkflowStep", "GetAllContexts", "GetChildContexts", "HasContextLinks", "HaveErrorsInContext", "IsEntityDeleted", "IsEntityInWorkflow", "IsEntityInWorkflowInContext", "SetEntityProperty", "GetConfigKeyValue", "GenerateUniqueId", "GetWeekOfYear", "AttributesHaveErrorsInContext", "GetAttributeValue", "GetAttributeValueFromContext", "GetAttributeValuesFromContext", "GetAttributeValueWithDefault", "GetAttributeValues", "GetAttributeValuesWithDefault", "GetAttributeValuesWithDefaultFromContext", "GetAttributeValueWithDefaultFromContext", "GetAttributeValueReferenceId", "GetAttributeValueReferenceIds", "GetAttributeValueProperty", "GetEntityAttributeValuesById", "GetEntityAttributeValueById", "GetEntityAttributeValueByIdInContext", "GetNestedAttributeComputedValue", "GetNestedAttributeValues", "GetNestedAttributeRow", "GetNestedAttributeRows", "DeleteNestedAttributeRows", "GetEntityNestedAttributeRow", "GetEntityNestedAttributeRows", "GetNestedAttributeValueReferenceID", "GetChildAttributefromNestedRowString", "GetRelatedEntityIdByAttributeValue", "GetRelatedEntityIdByAttributeValueFromContext", "GetRelatedEntityIdsByAttributeValue", "GetRelatedEntityIdsByAttributeValueFromContext", "HaveAnyAttributesChanged", "HaveAnyAttributesChangedInContext", "HaveAnyRelationshipAttributesChanged", "HaveAttributesChanged", "HaveAttributesChangedInContext", "IsAttributeLocalizable", "ValidateEmptyAttributes", "ValidateEmptyAttributesInContext", "DeleteAttribute", "DeleteEntityAttribute", "DeleteAttributeInContext", "DeleteRelationshipAttributeInContext", "GetExternalSourceOfAttribute", "GetEntitiesAttributesValues", "HaveOnlySpecifiedAttributesChanged", "GetMappedAttributeNames", "GetDeeplyNestedAttributeJSON", "GetEntityDeeplyNestedAttributeJSON", "GetAttributePreviousValues", "AreRelationshipsDeleted", "CheckIfAllRelationshipAttributeValueIs", "CheckIfAnyRelationshipAttributeValueIs", "CheckIfAllRelatedEntityAttributeValueIs", "CheckIfAnyRelatedEntityAttributeValueIs", "GetCurrentRelatedEntityIds", "GetRelatedEntityIdForContext", "GetRelatedEntityId", "GetRelatedEntityIds", "GetRelatedEntityIdsForContext", "GetRelatedEntityIdByRelationshipAttributeValue", "GetRelatedEntityIdsByRelationshipAttributeValue", "GetRelatedEntityIdByRelationshipAttributeValueFromContext", "GetRelatedEntityIdsByRelationshipAttributeValueFromContext", "GetRelationshipAttributevalue", "GetRelationshipAttributevalues", "HaveRelationships", "HaveRelationshipsInContext", "HaveRelationshipsChanged", "RelationshipsHaveErrorsInContext", "RelationshipsCountInContext", "ValidateEmptyRelationshipAttributes", "ValidateEmptyRelationshipAttributesInContext", "ValidateEmptyAttributesForRelatedEntities", "ValidateEmptyAttributesForRelatedEntitiesInContext", "WhereUsedRelationship", "IsInheritanceBlocked", "GetWhereUsedEntityIds", "IsCurrentUserInRole", "CurrentUser", "GetImpersonateUser", "GetUserOwnershipData", "GetUserOwnershipEditData", "GetUserOwnershipDataCollection", "GetUserOwnershipEditDataCollection", "GetUserProperty", "StopBRExecution", "ValidateExternalLink", "GetClientAttributesFromRequest", "GetDefaultLocaleForTenant", "GetGlobalVariable", "GetRestAPIResponse", "GetUniqueId", "JoinStringCollection", "SetVariable", "SetGlobalVariable", "ValidateByRegex", "GetOriginatingClientId", "GetClientId", "ValidateGTINCheckDigit", "ValidateISBNCheckDigit", "CalculateGTINCheckDigit", "GetValueByJsonPath", "ExtractUOMInfo", "ValidateLuhnAlgorithm", "HasSrcAloneChanged", "URLEncode", "AddToContext", "DeleteContext", "AddNestedAttributeRow", "AddNestedAttributeRowInContext", "SetAttributeValue", "SetAttributeValueInContext", "SetAttributeValues", "SetAttributeValuesInContext", "SetNestedChildAttributeByCondition", "SetDeeplyNestedAttributeJSON", "DeleteRelationships", "SetRelationshipAttribute", "SetRelationshipAttributeFromRelatedEntity", "AddRelationshipInContextByEntityId", "CopyAttributeValueToGovern", "GetBusinessConditionStatus", "GetEntityBusinessConditionStatus", "AddAttributeError", "AddAttributeInformation", "AddContextError", "AddContextInformation", "AddContextWarning", "AddAttributeErrorInContext", "AddAttributeInformationInContext", "AddAttributeWarningInContext", "AddRelationshipAttributeError", "AddRelationshipAttributeInformation", "AddRelationshipAttributeWarning", "AddRelationshipAttributeErrorInContext", "AddRelationshipAttributeInformationInContext", "AddRelationshipAttributeWarning", "AddRelationshipError", "AddRelationshipInformation", "AddRelationshipWarning", "AddRelationshipInformationInContext", "AddRelationshipErrorInContext", "AddRelationshipWarningInContext", "AddAttributeWarning", "ValidatePhone", "ChangeAssignment", "ChangeAssignmentInContext", "InitiateExport", "InitiateExportInContext", "InitiateExportInLocale", "InitiateExportInContextAndLocale", "InitiateExportForDeletedEntity", "InitiateExportForDeletedEntityInContext", "InitiateExportForEntity", "InitiateExportForRelatedEntity", "InitiateExportForDeletedEntityInContextAndLocale", "InvokeWorkflow", "InvokeWorkflowInContext", "ResumeWorkflow", "ResumeWorkflowInContext", "ScheduleEntityForExport", "ScheduleEntityForGraphProcessing", "ScheduleWhereUsedEntitiesForGraphProcessing", "SendEntityForGraphProcessing", "SendWhereUsedEntitiesForGraphProcessing", "SendEmail", "CreateSnapshot", "RestoreSnapshot", "ExportApprovedVersion", "CreateAndExportApprovedVersion", "CreateEntity", "DeleteEntity", "GetBusinessConditionStatus", "GetEntityBusinessConditionStatus", "ManageAddress", "GetWorkflowComment", "GetEntityCurrentWorkflowStep", "EndWorkflow", "GenerateVariants", "ScheduleOrSendEntityForGraphProcessing", "SetEntityAttributeValue", "SetEntityAttributeValueForContext", "AddEntityNestedAttributeRow", "SetEntityDeeplyNestedAttributeJSON", "CheckIfAnyWhereUsedEntityAttributeValueIs", "GetChangedNestedAttributeRows", "GetDeletedNestedAttributeRows", "ResumeRelatedEntityWorkflow", "ScheduleRelatedEntitiesForGraphProcessing", "SendRelatedEntitiesForGraphProcessing", "SetRelatedEntityAttributeValue", "SetRelatedEntityAttributeValueForContext", "WhereUsedRelationshipsCountInContext", "GetConnectorState", "SetConnectorState", "InvokeConnectorState", "AttributeInContext", "SortedAttributeValues", "SortedAttributeValuesFromContext", "URLEncode", "GetApplicationURL", "CurrentWorkflowStepStartDate", "ContextType", "ContextPath"
         # ... include all remaining keywords from your file
         "URLEncode", "GetApplicationURL", "CurrentWorkflowStepStartDate", "ContextType", "ContextPath"
     ]
-
-   
-
-    
     xls = pd.ExcelFile(file, engine="openpyxl")
     df_rules = pd.read_excel(xls, sheet_name="BUSINESS RULES", engine="openpyxl")
 
-    # ✅ Use original column names
+    # Filter enabled rules
     df_rules = df_rules[df_rules["IS ENABLED?"] == "Yes"]
     df_rules["DEFINITION"] = df_rules["DEFINITION"].astype(str).str.strip()
 
     results = []
     for keyword in keywords:
         count = df_rules[df_rules["DEFINITION"].str.contains(keyword, case=False, na=False)]["NAME"].nunique()
-        if count > 0:
-            results.append({"Keyword": keyword, "Count of Matching Rules": count})
+        results.append({"Keyword": keyword, "Count of Matching Rules": count})
 
-    df_output = pd.DataFrame(results).sort_values(by="Count of Matching Rules", ascending=False)
+    # ✅ Handle empty or mismatched cases safely
+    df_output = pd.DataFrame(results)
+
+    if not df_output.empty and "Count of Matching Rules" in df_output.columns:
+        df_output = df_output.sort_values(by="Count of Matching Rules", ascending=False)
+    else:
+        df_output = pd.DataFrame([{"Keyword": "No matches found", "Count of Matching Rules": 0}])
+
     return write_clean_excel(df_output)
-
-
-# UI Layout
-col1, col2 = st.columns(2)
 
 
 # Unused Business Rules Logic
@@ -181,33 +208,27 @@ def generate_unused_business_rules(file):
     df_conditions = pd.read_excel(xls, sheet_name="BUSINESS CONDITIONS", engine="openpyxl")
     df_mapping = pd.read_excel(xls, sheet_name="GOVERNANCE MAPPING", engine="openpyxl")
 
-    # Filter enabled rules
     df_rules = df_rules[df_rules["IS ENABLED?"] == "Yes"]
     rule_names = set(df_rules["NAME"].dropna().astype(str))
 
-    # Extract mapped rules from BUSINESS CONDITIONS
     condition_rules = df_conditions[df_conditions["IS ENABLED?"] == "Yes"]["MAPPED BUSINESS RULE(s)"].dropna().astype(str)
     mapped_condition_rules = set()
     for entry in condition_rules:
         mapped_condition_rules.update([rule.strip() for rule in entry.split("||")])
 
-    # Extract mapped rules from GOVERNANCE MAPPING
     mapping_rules = df_mapping[df_mapping["IS ENABLED?"] == "Yes"]["MAPPED BUSINESS RULE"].dropna().astype(str)
     mapped_mapping_rules = set()
     for entry in mapping_rules:
         mapped_mapping_rules.update([rule.strip() for rule in entry.split("||")])
 
-    # Combine all mapped rules
     all_mapped_rules = mapped_condition_rules.union(mapped_mapping_rules)
-
-    # Identify unused rules
     unused_rules = sorted(list(rule_names - all_mapped_rules))
     df_unused = pd.DataFrame({"Unused Business Rules": unused_rules})
     return write_clean_excel(df_unused)
 
+
 # UI Layout
 col1, col2 = st.columns(2)
-
 
 with col1:
     st.header("Upload Governance Model")
@@ -220,8 +241,6 @@ with col1:
         keyword_output = generate_keyword_analysis(gov_file)
         st.download_button("Generate Keyword List Document", data=keyword_output, file_name="keywords used in governance model.xlsx")
 
-
-        # New button for unused business rules
         unused_output = generate_unused_business_rules(gov_file)
         st.download_button("Unused Business Rules in Governance Model", data=unused_output, file_name="unused_business_rules.xlsx")
 
